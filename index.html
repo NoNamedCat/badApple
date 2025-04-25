@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Bad Apple - Monochrome Grid Player</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: black;
+      color: white;
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Controls section */
+    #controls {
+      background: rgba(0, 0, 0, 0.9);
+      padding: 10px;
+      border-bottom: 1px solid white;
+      z-index: 1000;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+
+    #ws-url {
+      width: 250px;
+    }
+
+    #fps-slider, #volume-slider {
+      width: 150px;
+    }
+
+    label {
+      margin-left: 8px;
+    }
+
+    /* Play button over everything until clicked */
+    #playBtn {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 2000;
+      font-size: 20px;
+      padding: 10px 20px;
+      background: white;
+      color: black;
+      border: none;
+      cursor: pointer;
+    }
+
+    /* Grid display */
+    #grid {
+      line-height: 1em;
+      font-size: 12px;
+      white-space: pre;
+      overflow: auto;
+      flex-grow: 1;
+      padding: 10px;
+    }
+
+    /* Hidden video and canvas elements */
+    video, canvas {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <!-- Play button (to allow audio autoplay) -->
+  <button id="playBtn">▶️ Start Video</button>
+
+  <!-- Top controls section -->
+  <div id="controls">
+    <input type="text" id="ws-url" placeholder="ws://localhost:1234">
+    <button id="ws-connect">Connect WebSocket</button>
+    <span id="ws-status">⛔ Disconnected</span>
+
+    <label for="fps-slider">Max FPS: <span id="fps-value">10</span></label>
+    <input type="range" id="fps-slider" min="1" max="30" value="10">
+
+    <label for="volume-slider">Volume</label>
+    <input type="range" id="volume-slider" min="0" max="1" step="0.01" value="1">
+  </div>
+
+  <!-- Grid output (video display) -->
+  <pre id="grid">Loading...</pre>
+
+  <!-- Hidden elements for processing -->
+  <video id="video" src="BadApple.mp4" muted loop crossorigin="anonymous"></video>
+  <canvas id="canvas" width="20" height="12"></canvas>
+
+  <script>
+    // Element references
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const grid = document.getElementById('grid');
+
+    const wsUrlInput = document.getElementById('ws-url');
+    const wsConnectBtn = document.getElementById('ws-connect');
+    const wsStatus = document.getElementById('ws-status');
+
+    const fpsSlider = document.getElementById('fps-slider');
+    const fpsValue = document.getElementById('fps-value');
+
+    const volumeSlider = document.getElementById('volume-slider');
+    const playBtn = document.getElementById('playBtn');
+
+    // Set initial volume
+    volumeSlider.addEventListener('input', () => {
+      video.volume = parseFloat(volumeSlider.value);
+    });
+
+    // Update FPS label
+    fpsSlider.addEventListener('input', () => {
+      fpsValue.textContent = fpsSlider.value;
+    });
+
+    let websocket = null;
+    let previousFrame = "";
+
+    // Connect WebSocket
+    wsConnectBtn.addEventListener('click', () => {
+      const url = wsUrlInput.value;
+      if (websocket) websocket.close();
+
+      websocket = new WebSocket(url);
+
+      websocket.onopen = () => {
+        wsStatus.textContent = '🟢 Connected';
+        wsStatus.style.color = 'lightgreen';
+      };
+
+      websocket.onerror = (err) => {
+        wsStatus.textContent = '🔴 Error';
+        wsStatus.style.color = 'red';
+        console.error('WebSocket error:', err);
+      };
+
+      websocket.onclose = () => {
+        wsStatus.textContent = '⛔ Disconnected';
+        wsStatus.style.color = 'gray';
+      };
+    });
+
+    // Start video with audio on button click
+    playBtn.addEventListener('click', () => {
+      video.muted = false;
+      video.volume = parseFloat(volumeSlider.value);
+
+      video.play().then(() => {
+        drawLoop();
+        playBtn.style.display = 'none';
+      }).catch(e => {
+        alert("Error playing video with audio: " + e);
+        console.error(e);
+      });
+    });
+
+    // Frame control logic
+    let lastFrameTime = 0;
+
+    function drawLoop(timestamp = 0) {
+      const fps = parseInt(fpsSlider.value);
+      const interval = 1000 / fps;
+
+      if (timestamp - lastFrameTime >= interval) {
+        lastFrameTime = timestamp;
+        drawFrame();
+      }
+
+      requestAnimationFrame(drawLoop);
+    }
+
+    // Convert frame to hex and send if changed
+    function drawFrame() {
+      if (video.paused || video.ended) return;
+
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const frame = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+
+      let output = '';
+      let hexFrame = 's';
+
+      for (let y = 0; y < canvas.height; y++) {
+        for (let x = 0; x < canvas.width; x++) {
+          const index = (y * canvas.width + x) * 4;
+          const r = frame[index];
+          const g = frame[index + 1];
+          const b = frame[index + 2];
+          const avg = (r + g + b) / 3;
+          const hex = Math.floor(avg / 16).toString(16).toUpperCase();
+          output += hex;
+          hexFrame += hex;
+        }
+        output += '\n';
+      }
+
+      grid.textContent = output;
+
+      if (hexFrame !== previousFrame) {
+        if (websocket && websocket.readyState === WebSocket.OPEN) {
+          websocket.send(hexFrame);
+          console.log("Frame sent:", hexFrame);
+        }
+        previousFrame = hexFrame;
+      }
+    }
+  </script>
+</body>
+</html>
